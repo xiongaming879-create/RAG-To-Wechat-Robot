@@ -29,6 +29,8 @@ class KbError(Exception):
 
 
 async def upload(file_bytes: bytes, filename: str) -> dict:
+    # 安全校验：filename 来自调用方（群场景用户可控），剥掉路径分量防穿越（覆盖 \ 和 / 两种分隔符）
+    filename = os.path.basename(filename.replace("\\", "/"))
     ext = os.path.splitext(filename)[1].lstrip(".").lower()
     if ext not in ALLOWED_EXTS:
         raise KbError(f"不支持的文件格式: {ext or filename}，仅支持 {sorted(ALLOWED_EXTS)}")
@@ -36,7 +38,10 @@ async def upload(file_bytes: bytes, filename: str) -> dict:
         raise KbError("文件超过 20MB 上限")
     file_hash = hashlib.md5(file_bytes).hexdigest()
 
-    docs = await vector_store.list_docs()
+    try:
+        docs = await vector_store.list_docs()
+    except Exception as e:
+        raise KbError(f"查询文档列表失败: {e}") from e
     if any(d["file_hash"] == file_hash for d in docs):
         return {"status": "skipped"}
 

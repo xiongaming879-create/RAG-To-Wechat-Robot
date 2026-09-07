@@ -194,3 +194,13 @@ def test_list_docs_passthrough(env):
     store, _ = env
     store.docs = [{"doc_id": "d1", "file_hash": "h"}]
     assert asyncio.run(kb_service.list_docs()) == store.docs
+
+
+def test_upload_strips_path_traversal(env, monkeypatch, tmp_path):
+    store, upload_dir = env
+    monkeypatch.setattr(kb_service.loader, "parse_file", fake_parse({NEW_BYTES: "t"}))
+    result = asyncio.run(kb_service.upload(NEW_BYTES, "../evil.md"))
+    assert result["status"] == "ok"
+    # 写盘落在 uploads/ 内，而非目录外
+    assert (upload_dir / "evil.md").read_bytes() == NEW_BYTES
+    assert not (upload_dir.parent / "evil.md").exists()
