@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     WX_SECRET: str = ""
     WX_TOKEN: str = ""
     WX_AES_KEY: str = ""
+    # 机器人在企业微信中的 userid（用于群聊 @ 判定，T17 实测校准）
+    WX_BOT_USERID: str = ""
 
     # LLM（硅基流动）
     LLM_API_KEY: str = ""
