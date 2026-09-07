@@ -56,7 +56,12 @@ class TaskQueue:
         """优雅停止：先排空（drain）队列中剩余任务，再退出 worker。"""
         if self._worker_tasks:
             for _ in self._worker_tasks:
-                await self._queue.put(None)  # 哨兵排在待处理任务之后 → 先 drain
+                # put_nowait 防止队列满/worker 意外死掉时 stop() 永久阻塞；
+                # 极端情况下（停止瞬间队列恰好满）哨兵会丢失，进程重启即回收
+                try:
+                    self._queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    pass
             await asyncio.gather(*self._worker_tasks, return_exceptions=True)
         self._worker_tasks = []
 
@@ -66,7 +71,11 @@ class TaskQueue:
             if item is None:
                 break
             handler, payload = item
-            await self._run(handler, payload)
+            try:
+                await self._run(handler, payload)
+            except Exception:
+                # 兜底防护：任何意外异常不允许杀死 worker（否则并发容量永久减少）
+                logger.exception("worker 处理任务时发生意外异常 payload=%r", payload)
 
     async def _run(self, handler, payload) -> None:
         for attempt in range(self.retries + 1):
@@ -85,7 +94,11 @@ class TaskQueue:
                 reason = f"error: {e}"
             logger.warning("任务失败 (attempt %d/%d): %s", attempt + 1, self.retries + 1, reason)
         if self.on_failure:
-            self.on_failure(payload, reason)
+            try:
+                self.on_failure(payload, reason)
+            except Exception:
+                # 回调抛异常（如回复发送失败）不能波及 worker
+                logger.exception("on_failure 回调异常 payload=%r", payload)
 
 
 task_queue = TaskQueue()

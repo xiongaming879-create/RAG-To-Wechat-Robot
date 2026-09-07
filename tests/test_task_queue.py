@@ -98,5 +98,65 @@ async def test_stop_stops_consuming():
     assert called == []
 
 
+async def test_worker_concurrency_capped():
+    concurrent = 0
+    peak = 0
+
+    async def handler(payload):
+        nonlocal concurrent, peak
+        concurrent += 1
+        peak = max(peak, concurrent)
+        await asyncio.sleep(0.05)
+        concurrent -= 1
+
+    q = TaskQueue(workers=2, maxsize=10)
+    await q.start()
+    for i in range(6):
+        await q.put(handler, i)
+    await asyncio.sleep(0.4)
+    await q.stop()
+    assert peak == 2  # 两个 worker 满负载跑，但峰值不超过 workers
+
+
+async def test_retry_success_no_on_failure():
+    calls = []
+    failures = []
+
+    async def handler(payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            raise ValueError("flaky")
+        return "ok"
+
+    q = TaskQueue(workers=1, retries=2, retry_delay=0.01, on_failure=lambda p, r: failures.append(r))
+
+    await q.start()
+    await q.put(handler, "p1")
+    await asyncio.sleep(0.2)
+    await q.stop()
+    assert calls == ["p1", "p1"]  # 首次失败 + 重试成功
+    assert failures == []
+
+
+async def test_on_failure_raises_does_not_kill_worker():
+    calls = []
+
+    async def handler(payload):
+        calls.append(payload)
+
+    def bad_on_failure(p, r):
+        raise RuntimeError("reply send failed")
+
+    q = TaskQueue(workers=1, timeout=0.05, retries=0, on_failure=bad_on_failure)
+
+    await q.start()
+    await q.put(handler, "slow")  # 触发超时 → on_failure 抛异常
+    await asyncio.sleep(0.2)
+    await q.put(handler, "next")  # worker 仍应存活并处理后续任务
+    await asyncio.sleep(0.2)
+    await q.stop()
+    assert calls == ["slow", "next"]
+
+
 def test_module_level_singleton():
     assert isinstance(task_queue, TaskQueue)
