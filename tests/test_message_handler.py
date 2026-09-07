@@ -243,12 +243,30 @@ def test_chat_rate_limit_two_per_second():
     assert limiter.allow("c1") is True
 
 
+def test_probe_does_not_charge():
+    t = [100.0]
+    limiter = SlidingWindowLimiter(1, 60.0, now=lambda: t[0])
+    assert limiter.allow("k", charge=False) is True
+    assert limiter.allow("k", charge=False) is True  # 探测不记账, 仍可过
+    assert limiter.allow("k") is True  # 真正记账一次
+    assert limiter.allow("k", charge=False) is False  # 已满
+
+
 async def test_handle_message_rate_limit_integration(env, sent, enqueued, monkeypatch):
     monkeypatch.setattr(mh, "user_limiter", SlidingWindowLimiter(5, 60.0))
     for i in range(6):
         # 每条换 chat_id, 隔离群 2 条/秒限制, 单独验证单用户 5 次/分钟
         await handle_message(make_msg(msgid=f"m{i}", at_userids=["bot"], from_user="flood", chat_id=f"c{i}"))
     assert len(enqueued) == 5  # 第 6 条被限流丢弃
+
+
+async def test_queue_full_replies_backoff(env, sent, monkeypatch):
+    async def fake_put(handler, payload):
+        return {"ok": False, "msg": "当前咨询量较大，请稍后再试"}
+
+    monkeypatch.setattr(mh.task_queue, "put", fake_put)
+    await handle_message(make_msg(at_userids=["bot"]))
+    assert sent == [{"chat_id": "c1", "content": "当前咨询量较大，请稍后再试", "at": None}]
 
 
 async def test_process_question_success_sends_answer(env, sent, monkeypatch):

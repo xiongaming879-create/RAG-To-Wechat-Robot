@@ -30,14 +30,16 @@ class SlidingWindowLimiter:
         self._now = now
         self._hits: dict[str, deque[float]] = {}
 
-    def allow(self, key: str) -> bool:
+    def allow(self, key: str, charge: bool = True) -> bool:
+        """charge=False 为只探测不记账（多限流维度统一记账用）。"""
         now = self._now()
         hits = self._hits.setdefault(key, deque())
         while hits and now - hits[0] >= self._window:
             hits.popleft()
         if len(hits) >= self._limit:
             return False
-        hits.append(now)
+        if charge:
+            hits.append(now)
         return True
 
 
@@ -117,12 +119,14 @@ async def handle_message(msg: dict) -> None:
         if not await is_at_me(msg):
             return
 
-        # 限流: 超限丢弃不回复
+        # 限流: 超限丢弃不回复; 先探测后记账, 任一维度超限则两侧都不扣额度
         user = msg.get("from_user") or ""
         chat_key = msg.get("chat_id") or user
-        if not user_limiter.allow(user) or not chat_limiter.allow(chat_key):
+        if not (user_limiter.allow(user, charge=False) and chat_limiter.allow(chat_key, charge=False)):
             logger.info("限流丢弃 user=%s chat=%s msgid=%s", user, chat_key, msgid)
             return
+        user_limiter.allow(user)
+        chat_limiter.allow(chat_key)
 
         question = extract_question(msg)
         command = parse_command(question)
@@ -138,7 +142,9 @@ async def handle_message(msg: dict) -> None:
 
         result = await task_queue.put(process_question, msg)
         if not result.get("ok"):
+            # 队列满(积压保护): 按 spec 回复当前咨询量话术
             logger.warning("队列积压拒绝 msgid=%s: %s", msgid, result.get("msg"))
+            await wx_sender.send_text(await _chat_id(msg), result.get("msg") or "当前咨询量较大，请稍后再试")
     except Exception:
         logger.exception("handle_message 处理失败 msg=%r", msg)
 
@@ -165,6 +171,10 @@ async def process_question(msg: dict) -> None:
     await wx_sender.send_text(chat_id, reply)
 
 
+# 防 fire-and-forget task 被 GC（官方推荐模式）
+_background_tasks: set[asyncio.Task] = set()
+
+
 def on_queue_failure(payload: dict, reason: str) -> None:
     """队列 on_failure 同步回调: 回"服务繁忙，请稍后再试"."""
     logger.warning("任务最终失败 reason=%s payload=%r", reason, payload)
@@ -176,7 +186,9 @@ def on_queue_failure(payload: dict, reason: str) -> None:
         except Exception:
             logger.exception("回复服务繁忙失败 payload=%r", payload)
 
-    asyncio.get_running_loop().create_task(_reply())
+    task = asyncio.get_running_loop().create_task(_reply())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 task_queue.on_failure = on_queue_failure
