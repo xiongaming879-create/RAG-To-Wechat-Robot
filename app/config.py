@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # 管理 API 鉴权
     ADMIN_API_TOKEN: str = ""
 
+    # 异步任务队列
+    QUEUE_MAXSIZE: int = 100
+    QUEUE_WORKERS: int = 3
+    QUEUE_TIMEOUT: float = 30.0
+    QUEUE_RETRIES: int = 2
+
     # Qdrant
     QDRANT_URL: str = "http://qdrant:6333"
     QDRANT_COLLECTION_NAME: str = "wechat_rag_kb"
