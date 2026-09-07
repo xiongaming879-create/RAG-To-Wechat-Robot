@@ -31,6 +31,10 @@ class VectorStore:
 
     async def upsert_chunks(self, chunks: list[dict], vectors: list[list[float]]) -> None:
         """批量 upsert；chunks 与 vectors 按同一顺序一一对应."""
+        if len(chunks) != len(vectors):
+            raise ValueError(
+                f"chunks({len(chunks)}) 与 vectors({len(vectors)}) 数量不一致"
+            )
         points = [
             models.PointStruct(id=str(uuid.uuid4()), vector=v, payload=c)
             for c, v in zip(chunks, vectors)
@@ -91,7 +95,8 @@ class VectorStore:
 
     async def is_alive(self) -> bool:
         try:
-            return await self.client.get_collections() is not None
+            await self.client.get_collections()
+            return True
         except Exception:
             return False
 

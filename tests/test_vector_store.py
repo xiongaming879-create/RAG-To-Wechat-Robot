@@ -86,6 +86,16 @@ async def test_upsert_chunks_pairs_vector_and_payload():
 
 
 @pytest.mark.anyio
+async def test_upsert_chunks_length_mismatch_raises():
+    store = _make_store()
+
+    with pytest.raises(ValueError):
+        await store.upsert_chunks([dict(CHUNK)], [])
+
+    store.client.upsert.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_delete_doc_uses_doc_id_filter():
     store = _make_store()
 
