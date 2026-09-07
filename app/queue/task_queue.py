@@ -41,6 +41,10 @@ class TaskQueue:
         """入队原语；替换为 Redis 版时只改此方法。"""
         self._queue.put_nowait((handler, payload))
 
+    def qsize(self) -> int:
+        """当前积压任务数（只读，/health 用）。"""
+        return self._queue.qsize()
+
     async def put(self, handler, payload) -> dict:
         """队列满返回 ok=False（积压保护），否则入队。"""
         try:

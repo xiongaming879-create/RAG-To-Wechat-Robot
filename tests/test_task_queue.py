@@ -175,3 +175,14 @@ async def test_stop_with_full_queue_returns_bounded():
 
 def test_module_level_singleton():
     assert isinstance(task_queue, TaskQueue)
+
+
+def test_qsize_readonly():
+    q = TaskQueue(workers=1)
+    assert q.qsize() == 0
+
+    async def handler(payload):
+        return "ok"
+
+    q._queue.put_nowait((handler, {}))
+    assert q.qsize() == 1

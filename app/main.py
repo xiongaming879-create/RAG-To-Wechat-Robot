@@ -1,11 +1,36 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
+from app.queue.task_queue import task_queue
+from app.rag.vector_store import vector_store
 from app.wx_callback import router as wx_callback_router
 
-app = FastAPI(title="RAG WeChat Bot")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    try:
+        await vector_store.ensure_collection()
+    except Exception:
+        # Qdrant 未就绪不阻断启动，/health 会如实上报 unavailable
+        logger.exception("启动时 ensure_collection 失败")
+    await task_queue.start()
+    yield
+    await task_queue.stop()
+
+
+app = FastAPI(title="RAG WeChat Bot", lifespan=lifespan)
 app.include_router(wx_callback_router)
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "queue_size": 0, "vector_store": "unknown"}
+async def health():
+    alive = await vector_store.is_alive()
+    return {
+        "status": "ok",
+        "queue_size": task_queue.qsize(),
+        "vector_store": "ok" if alive else "unavailable",
+    }
