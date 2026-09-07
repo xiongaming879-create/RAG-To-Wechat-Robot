@@ -1,0 +1,47 @@
+services:
+  rag_wechat_bot:
+    build: .
+    container_name: rag_wechat_bot
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./uploads:/app/uploads
+      - ./qdrant_data:/app/qdrant_data
+      - ./logs:/app/logs
+    depends_on:
+      - qdrant
+    networks:
+      - rag_internal_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    container_name: rag_qdrant
+    restart: always
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+    expose:
+      - "6333"
+    networks:
+      - rag_internal_net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  rag_internal_net:
+    driver: bridge
