@@ -56,12 +56,12 @@ class TaskQueue:
         """优雅停止：先排空（drain）队列中剩余任务，再退出 worker。"""
         if self._worker_tasks:
             for _ in self._worker_tasks:
-                # put_nowait 防止队列满/worker 意外死掉时 stop() 永久阻塞；
-                # 极端情况下（停止瞬间队列恰好满）哨兵会丢失，进程重启即回收
                 try:
                     self._queue.put_nowait(None)
                 except asyncio.QueueFull:
-                    pass
+                    # 队列满恰说明 worker 活着且在消费，await put 必有界成功，
+                    # 不会永久挂起（worker 死亡场景已被 _worker 兜底防护排除）
+                    await self._queue.put(None)
             await asyncio.gather(*self._worker_tasks, return_exceptions=True)
         self._worker_tasks = []
 

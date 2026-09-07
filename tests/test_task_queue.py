@@ -158,5 +158,20 @@ async def test_on_failure_raises_does_not_kill_worker():
     assert calls == ["slow", "next"]
 
 
+async def test_stop_with_full_queue_returns_bounded():
+    async def handler(payload):
+        await asyncio.sleep(0.05)
+
+    q = TaskQueue(maxsize=2, workers=1, retries=0)
+    await q.start()
+    await q.put(handler, 0)
+    await asyncio.sleep(0.02)  # worker 已取走 item0 并在处理中
+    assert (await q.put(handler, 1))["ok"] is True
+    assert (await q.put(handler, 2))["ok"] is True  # 队列满
+    assert (await q.put(handler, 3))["ok"] is False  # 积压保护
+    # 满队列下 stop()：哨兵 put_nowait 失败 → 回退 await put，排空后有界返回，不挂起
+    await asyncio.wait_for(q.stop(), timeout=2)
+
+
 def test_module_level_singleton():
     assert isinstance(task_queue, TaskQueue)
