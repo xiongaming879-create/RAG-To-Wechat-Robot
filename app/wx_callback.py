@@ -18,8 +18,10 @@ from app.wx_crypto import WxCrypto
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Task 15 注入真实处理器
-message_handler: Callable[[dict], Awaitable[None]] | None = None
+# Task 15 接线: 完整消息流水线
+from app.message_handler import handle_message
+
+message_handler: Callable[[dict], Awaitable[None]] | None = handle_message
 
 # 群聊 @ 字段在不同模式/版本下命名不一, 逐个尝试, 缺失容错为 []
 _AT_FIELD_CANDIDATES = ("atuserlist", "AtUserIdList", "AtList", "at_list", "AtUsers")
@@ -46,6 +48,9 @@ def _parse_msg(xml_text: str) -> dict:
         "chat_id": _text("ChatId") or None,
         "content": _text("Content"),
         "at_userids": at_userids,
+        # 群文件消息专用 (其余消息为 "")
+        "media_id": _text("MediaId"),
+        "file_name": _text("FileName"),
     }
 
 

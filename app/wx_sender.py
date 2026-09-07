@@ -9,6 +9,7 @@ from app.config import settings
 from app.wx_token import wx_access_token
 
 _SEND_URL = "https://qyapi.weixin.qq.com/cgi-bin/message/send"
+_MEDIA_GET_URL = "https://qyapi.weixin.qq.com/cgi-bin/media/get"
 
 # 句末标点（句号/感叹/问号/分号），分片只落在这些边界后
 _SENTENCE_RE = re.compile(r"(?<=[。！？!?；;])")
@@ -128,6 +129,24 @@ class WxSender:
             if not await self._send_one(chat_id, chunk, at_userids):
                 return False
         return True
+
+    async def download_media(self, media_id: str) -> bytes:
+        """下载临时素材（群文件上传用）；非 2xx 或 errcode 非 0 抛异常."""
+        token = await self._get_token()
+        resp = await self._ensure_client().get(
+            _MEDIA_GET_URL,
+            params={"access_token": token, "media_id": media_id},
+        )
+        resp.raise_for_status()
+        # 失败时微信返回 JSON {"errcode":..}；成功返回文件二进制（JSON 解析必失败）
+        try:
+            data = resp.json()
+        except ValueError:
+            return resp.content
+        errcode = data.get("errcode", 0)
+        if errcode != 0:
+            raise RuntimeError(f"media/get 失败: errcode={errcode} errmsg={data.get('errmsg')}")
+        return resp.content
 
 
 wx_sender = WxSender()
