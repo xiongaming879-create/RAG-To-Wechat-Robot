@@ -40,6 +40,38 @@ async def test_timeout_interrupts_handler_and_calls_on_failure():
     assert failures == [("p1", "timeout")]
 
 
+async def test_item_timeout_overrides_default():
+    """put(..., timeout=X) 逐项超时优先于队列默认 timeout."""
+    failures = []
+
+    async def handler(payload):
+        await asyncio.sleep(1)
+
+    q = TaskQueue(workers=1, timeout=5, retries=0, on_failure=lambda p, r: failures.append((p, r)))
+
+    await q.start()
+    await q.put(handler, "p1", timeout=0.05)
+    await asyncio.sleep(0.3)
+    await q.stop()
+    assert failures == [("p1", "timeout")]
+
+
+async def test_item_timeout_none_uses_default_and_item_passes():
+    """不传 timeout 的调用行为完全不变."""
+    done = asyncio.Event()
+
+    async def handler(payload):
+        done.set()
+        return "ok"
+
+    q = TaskQueue(workers=1, timeout=5)
+    await q.start()
+    result = await q.put(handler, "p1")  # 不传 timeout
+    await asyncio.wait_for(done.wait(), timeout=2)
+    await q.stop()
+    assert result == {"ok": True, "msg": "已受理"}
+
+
 async def test_retries_twice_then_on_failure():
     calls = []
 
@@ -184,5 +216,5 @@ def test_qsize_readonly():
     async def handler(payload):
         return "ok"
 
-    q._queue.put_nowait((handler, {}))
+    q._queue.put_nowait((handler, {}, None))
     assert q.qsize() == 1

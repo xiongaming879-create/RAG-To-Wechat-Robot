@@ -37,18 +37,18 @@ class TaskQueue:
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=self.maxsize)
         self._worker_tasks: list[asyncio.Task] = []
 
-    async def enqueue(self, handler, payload) -> None:
-        """入队原语；替换为 Redis 版时只改此方法。"""
-        self._queue.put_nowait((handler, payload))
+    async def enqueue(self, handler, payload, timeout: float | None = None) -> None:
+        """入队原语；替换为 Redis 版时只改此方法。timeout 为该项专有超时（None=用默认）。"""
+        self._queue.put_nowait((handler, payload, timeout))
 
     def qsize(self) -> int:
         """当前积压任务数（只读，/health 用）。"""
         return self._queue.qsize()
 
-    async def put(self, handler, payload) -> dict:
+    async def put(self, handler, payload, timeout: float | None = None) -> dict:
         """队列满返回 ok=False（积压保护），否则入队。"""
         try:
-            await self.enqueue(handler, payload)
+            await self.enqueue(handler, payload, timeout)
         except asyncio.QueueFull:
             return {"ok": False, "msg": BACKOFF_FULL_MSG}
         return {"ok": True, "msg": "已受理"}
@@ -74,19 +74,20 @@ class TaskQueue:
             item = await self._queue.get()
             if item is None:
                 break
-            handler, payload = item
+            handler, payload, item_timeout = item
             try:
-                await self._run(handler, payload)
+                await self._run(handler, payload, item_timeout)
             except Exception:
                 # 兜底防护：任何意外异常不允许杀死 worker（否则并发容量永久减少）
                 logger.exception("worker 处理任务时发生意外异常 payload=%r", payload)
 
-    async def _run(self, handler, payload) -> None:
+    async def _run(self, handler, payload, item_timeout: float | None = None) -> None:
+        timeout = item_timeout if item_timeout is not None else self.timeout
         for attempt in range(self.retries + 1):
             if attempt:
                 await asyncio.sleep(self.retry_delay * (2 ** (attempt - 1)))  # 1s / 2s
             try:
-                await asyncio.wait_for(handler(payload), timeout=self.timeout)
+                await asyncio.wait_for(handler(payload), timeout=timeout)
                 return
             except FatalTaskError as e:
                 # 致命错误：丢弃，不重试，也不触发 on_failure

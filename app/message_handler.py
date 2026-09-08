@@ -22,6 +22,9 @@ CHAT_LIMIT, CHAT_WINDOW = 2, 1.0
 
 PENDING_TTL = 60  # 管理员待传文件缓存 60s
 
+# 管理指令专用队列超时：大文件 MinerU 解析 + 向量化可能远超默认 30s
+ADMIN_TASK_TIMEOUT = 180.0
+
 
 class SlidingWindowLimiter:
     def __init__(self, limit: int, window: float, now=time.monotonic):
@@ -65,8 +68,11 @@ async def _chat_id(msg: dict) -> str:
     return msg.get("chat_id") or msg.get("from_user") or ""
 
 
-async def _run_command(msg: dict, command: dict) -> None:
-    """管理员 #kb 指令 → kb_service → @管理员回执结果."""
+async def _run_command(msg: dict) -> None:
+    """队列 worker 执行: 管理员 #kb 指令 → kb_service → @管理员回执结果."""
+    command = parse_command(extract_question(msg))
+    if not command:
+        return
     chat_id = await _chat_id(msg)
     user = msg.get("from_user") or ""
     action, arg = command["action"], command["arg"]
@@ -119,6 +125,19 @@ async def handle_message(msg: dict) -> None:
         if not await is_at_me(msg):
             return
 
+        # 管理员指令在限流之前路由：指令不占问答限流额度
+        command = parse_command(extract_question(msg))
+        if command:
+            user = msg.get("from_user") or ""
+            if not is_admin(user):
+                return  # 非管理员指令静默丢弃
+            # 重活（MinerU 解析/embed/upsert）入队异步执行，回调 5s 窗口内返回
+            result = await task_queue.put(_run_command, msg, timeout=ADMIN_TASK_TIMEOUT)
+            if not result.get("ok"):
+                logger.warning("指令入队拒绝（队列满）user=%s msgid=%s", user, msg.get("msgid"))
+                await wx_sender.send_text(await _chat_id(msg), result.get("msg") or "当前咨询量较大，请稍后再试")
+            return
+
         # 限流: 超限丢弃不回复; 先探测后记账, 任一维度超限则两侧都不扣额度
         user = msg.get("from_user") or ""
         chat_key = msg.get("chat_id") or user
@@ -129,13 +148,6 @@ async def handle_message(msg: dict) -> None:
         chat_limiter.allow(chat_key)
 
         question = extract_question(msg)
-        command = parse_command(question)
-        if command:
-            if not is_admin(user):
-                return  # 非管理员指令静默丢弃
-            await _run_command(msg, command)
-            return
-
         if not question:
             await wx_sender.send_text(await _chat_id(msg), "请问有什么可以帮您？")
             return

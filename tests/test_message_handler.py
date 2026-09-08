@@ -51,8 +51,8 @@ def sent(monkeypatch):
 def enqueued(monkeypatch):
     calls = []
 
-    async def fake_put(handler, payload):
-        calls.append((handler, payload))
+    async def fake_put(handler, payload, timeout=None):
+        calls.append({"handler": handler, "payload": payload, "timeout": timeout})
         return {"ok": True, "msg": "ok"}
 
     monkeypatch.setattr(mh.task_queue, "put", fake_put)
@@ -81,8 +81,42 @@ async def test_non_at_message_dropped(env, sent, enqueued):
 async def test_at_question_enqueued(env, sent, enqueued):
     msg = make_msg(at_userids=["bot"])
     await handle_message(msg)
-    assert enqueued and enqueued[0][0] is process_question
-    assert enqueued[0][1] is msg
+    assert enqueued and enqueued[0]["handler"] is process_question
+    assert enqueued[0]["payload"] is msg
+    assert enqueued[0]["timeout"] is None  # 问答用队列默认超时
+    assert sent == []
+
+
+async def test_admin_command_enqueued_not_run_sync(env, sent, enqueued):
+    """指令走队列异步执行（回调 5s 窗口），且携带管理员专用长超时."""
+    msg = make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:list")
+    await handle_message(msg)
+    assert len(enqueued) == 1
+    assert enqueued[0]["handler"] is mh._run_command
+    assert enqueued[0]["payload"] is msg
+    assert enqueued[0]["timeout"] == mh.ADMIN_TASK_TIMEOUT
+    assert sent == []  # 回调路径内不执行指令、不发回执
+
+
+async def test_admin_command_bypasses_rate_limit(env, sent, enqueued, monkeypatch):
+    monkeypatch.setattr(mh, "user_limiter", SlidingWindowLimiter(0, 60.0))  # 全拒
+    monkeypatch.setattr(mh, "chat_limiter", SlidingWindowLimiter(0, 60.0))
+    await handle_message(make_msg(msgid="m1", at_userids=["bot"], from_user="admin", content="@bot #kb:list"))
+    assert len(enqueued) == 1  # 指令在限流前路由，不受问答限流影响
+    assert sent == []
+
+
+async def test_admin_command_queue_full_replies_backoff(env, sent, monkeypatch):
+    async def fake_put(handler, payload, timeout=None):
+        return {"ok": False, "msg": "当前咨询量较大，请稍后再试"}
+
+    monkeypatch.setattr(mh.task_queue, "put", fake_put)
+    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:list"))
+    assert sent == [{"chat_id": "c1", "content": "当前咨询量较大，请稍后再试", "at": None}]
+
+
+async def test_run_command_ignores_non_command_payload(env, sent):
+    await mh._run_command(make_msg(from_user="admin", content="普通文本"))
     assert sent == []
 
 
@@ -100,7 +134,7 @@ async def test_non_admin_command_ignored(env, sent, enqueued):
     assert enqueued == []
 
 
-async def test_admin_list_command_replies_at_admin(env, sent, enqueued, monkeypatch):
+async def test_admin_list_command_replies_at_admin(env, sent, monkeypatch):
     async def fake_list():
         return [
             {"doc_id": "d1", "filename": "a.pdf", "file_hash": "h1", "upload_time": "1", "chunk_count": 3},
@@ -108,11 +142,10 @@ async def test_admin_list_command_replies_at_admin(env, sent, enqueued, monkeypa
         ]
 
     monkeypatch.setattr(kb_service, "list_docs", fake_list)
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:list"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:list"))
     assert len(sent) == 1
     assert "a.pdf" in sent[0]["content"] and "b.md" in sent[0]["content"]
     assert sent[0]["at"] == ["admin"]
-    assert enqueued == []
 
 
 async def test_admin_list_empty_kb(env, sent, monkeypatch):
@@ -120,12 +153,12 @@ async def test_admin_list_empty_kb(env, sent, monkeypatch):
         return []
 
     monkeypatch.setattr(kb_service, "list_docs", fake_list)
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:list"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:list"))
     assert sent[0]["content"] == "知识库为空"
 
 
 async def test_admin_delete_without_arg_usage_hint(env, sent, monkeypatch):
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:delete"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:delete"))
     assert len(sent) == 1
     assert "用法" in sent[0]["content"]
     assert sent[0]["at"] == ["admin"]
@@ -143,7 +176,7 @@ async def test_admin_delete_success(env, sent, monkeypatch):
 
     monkeypatch.setattr(kb_service, "list_docs", fake_list)
     monkeypatch.setattr(kb_service, "delete", fake_delete)
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:delete a.pdf"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:delete a.pdf"))
     assert deleted == ["d1"]
     assert "a.pdf" in sent[0]["content"]
     assert sent[0]["at"] == ["admin"]
@@ -154,12 +187,12 @@ async def test_admin_delete_not_found(env, sent, monkeypatch):
         return []
 
     monkeypatch.setattr(kb_service, "list_docs", fake_list)
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:delete nope.pdf"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:delete nope.pdf"))
     assert "未找到" in sent[0]["content"]
 
 
 async def test_admin_upload_without_pending_file(env, sent, monkeypatch):
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:upload"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:upload"))
     assert sent[0]["content"] == "请先发送要上传的文件"
 
 
@@ -178,7 +211,7 @@ async def test_admin_upload_with_pending_file(env, sent, monkeypatch):
 
     monkeypatch.setattr(wx_sender, "download_media", fake_download)
     monkeypatch.setattr(kb_service, "upload", fake_upload)
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:upload"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:upload"))
     assert downloaded == ["media-123"]
     assert uploaded == [(b"file-bytes", "a.pdf")]
     assert "a.pdf" in sent[0]["content"]
@@ -197,7 +230,7 @@ async def test_admin_upload_kb_error_reported(env, sent, monkeypatch):
 
     monkeypatch.setattr(wx_sender, "download_media", fake_download)
     monkeypatch.setattr(kb_service, "upload", fake_upload)
-    await handle_message(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:upload"))
+    await mh._run_command(make_msg(at_userids=["bot"], from_user="admin", content="@bot #kb:upload"))
     assert "不支持的文件格式" in sent[0]["content"]
     assert sent[0]["at"] == ["admin"]
 
