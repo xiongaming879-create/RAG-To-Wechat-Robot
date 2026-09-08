@@ -117,3 +117,69 @@ async def test_retry_exhausted_raises():
     with pytest.raises(LLMClientError):
         await client.embed(["hi"])
     assert len(calls) == 3
+
+
+# ---------- 畸形 200 响应 → LLMClientError（而非 KeyError/TypeError 逃逸） ----------
+
+
+async def test_embed_malformed_missing_data():
+    async def handler(request):
+        return httpx.Response(200, json={"unexpected": 1})
+
+    client = make_client(handler)
+    with pytest.raises(LLMClientError, match="响应格式异常"):
+        await client.embed(["hi"])
+
+
+async def test_embed_malformed_item_missing_embedding():
+    async def handler(request):
+        return httpx.Response(200, json={"data": [{"nope": 1}]})
+
+    client = make_client(handler)
+    with pytest.raises(LLMClientError, match="响应格式异常"):
+        await client.embed(["hi"])
+
+
+async def test_rerank_malformed_missing_results():
+    async def handler(request):
+        return httpx.Response(200, json={})
+
+    client = make_client(handler)
+    with pytest.raises(LLMClientError, match="响应格式异常"):
+        await client.rerank("q", ["d1"])
+
+
+async def test_rerank_malformed_item_missing_score():
+    async def handler(request):
+        return httpx.Response(200, json={"results": [{"index": 0}]})
+
+    client = make_client(handler)
+    with pytest.raises(LLMClientError, match="响应格式异常"):
+        await client.rerank("q", ["d1"])
+
+
+async def test_chat_malformed_missing_choices():
+    async def handler(request):
+        return httpx.Response(200, json={"object": "x"})
+
+    client = make_client(handler)
+    with pytest.raises(LLMClientError, match="响应格式异常"):
+        await client.chat("s", "u")
+
+
+async def test_chat_malformed_empty_choices():
+    async def handler(request):
+        return httpx.Response(200, json={"choices": []})
+
+    client = make_client(handler)
+    with pytest.raises(LLMClientError, match="响应格式异常"):
+        await client.chat("s", "u")
+
+
+async def test_chat_malformed_missing_content():
+    async def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant"}}]})
+
+    client = make_client(handler)
+    with pytest.raises(LLMClientError, match="响应格式异常"):
+        await client.chat("s", "u")
