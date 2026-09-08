@@ -1,0 +1,6 @@
+.venv
+.git
+uploads
+qdrant_storage
+logs
+.pytest_cache
