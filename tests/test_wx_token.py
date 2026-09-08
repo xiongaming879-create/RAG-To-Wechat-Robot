@@ -35,8 +35,19 @@ async def test_first_get_fetches_second_get_cached(anyio_backend, token_factory)
 async def test_refresh_after_expire(anyio_backend, token_factory):
     t, counter = token_factory()
     await t.get()
-    t._expire_at = 0.0  # 强制到达提前刷新点
+    t.invalidate()  # 模拟 40014：强制作废缓存
     assert await t.get() == "tok-2"
+    assert len(counter) == 2
+
+
+@pytest.mark.anyio
+async def test_invalidate_forces_refetch(anyio_backend, token_factory):
+    """invalidate() 后下次 get() 必发新请求，且再次 get() 又回到缓存."""
+    t, counter = token_factory()
+    assert await t.get() == "tok-1"
+    t.invalidate()
+    assert await t.get() == "tok-2"
+    assert await t.get() == "tok-2"  # 新 token 重新进缓存
     assert len(counter) == 2
 
 

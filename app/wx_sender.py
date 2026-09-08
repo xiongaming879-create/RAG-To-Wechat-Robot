@@ -99,8 +99,8 @@ class WxSender:
     def _force_token_refresh(self) -> None:
         """40014 时让下次 get() 真正重新拉取（绕过未过期的本地缓存）."""
         holder = getattr(self._get_token, "__self__", None)
-        if holder is not None and hasattr(holder, "_expire_at"):
-            holder._expire_at = 0.0
+        if holder is not None and hasattr(holder, "invalidate"):
+            holder.invalidate()
 
     async def _send_one(self, chat_id: str, content: str, at_userids: list[str] | None) -> bool:
         """发送单条：首次 + 重试 2 次；40014 刷新 token 后重发一次."""

@@ -154,6 +154,34 @@ async def test_40014_retry_still_fails_returns_false():
     assert toks.calls == 2  # 刷新后重发一次即放弃
 
 
+async def test_40014_calls_invalidate_on_token_holder():
+    """token 持有者提供 invalidate() 时，40014 走公有方法作废缓存（不再碰 _expire_at 私有属性）."""
+    requests_seen = []
+
+    def route(request):
+        requests_seen.append(request)
+        if len(requests_seen) == 1:
+            return httpx.Response(200, json={"errcode": 40014})
+        return httpx.Response(200, json={"errcode": 0})
+
+    class HolderTokens:
+        def __init__(self):
+            self.invalidated = 0
+
+        def invalidate(self):
+            self.invalidated += 1
+
+        async def get(self):
+            return "tok"
+
+    holder = HolderTokens()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(route))
+    sender = WxSender(token_getter=holder.get, client=client, backoff=(0, 0))
+    ok = await sender.send_text("chat-1", "hello")
+    assert ok is True
+    assert holder.invalidated == 1
+
+
 async def test_generic_error_retried_twice_then_false():
     counter = []
 

@@ -43,6 +43,10 @@ class WxAccessToken:
             raise RuntimeError(f"gettoken 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
         return data["access_token"], data.get("expires_in", 7200)
 
+    def invalidate(self) -> None:
+        """使缓存的 token 立即失效（errcode 40014 时调用），下次 get() 重新拉取."""
+        self._expire_at = 0.0
+
     async def get(self) -> str:
         async with self._lock:
             if self._token and time.monotonic() < self._expire_at:
