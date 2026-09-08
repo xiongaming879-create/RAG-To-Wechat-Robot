@@ -34,6 +34,13 @@ class TestIsAtMe:
         assert await run_is_at_me(monkeypatch, "bot001", msg) is True
 
     @pytest.mark.anyio
+    async def test_at_all_word_boundary_only(self, monkeypatch):
+        """@ally / 邮箱 a@all.com 不触发 @all 判定."""
+        for content in ("看看@all人不错", "叫@ally 过来", "邮箱是a@all.com吧"):
+            msg = make_msg(content=content)
+            assert await run_is_at_me(monkeypatch, "bot001", msg) is False
+
+    @pytest.mark.anyio
     async def test_empty_bot_userid_no_false_positive(self, monkeypatch):
         msg = make_msg(at_userids=["u1", "u2"])
         assert await run_is_at_me(monkeypatch, "", msg) is False
@@ -51,6 +58,16 @@ class TestExtractQuestion:
 
     def test_at_all_removed(self):
         assert extract_question(make_msg("@all 怎么退货")) == "怎么退货"
+
+    def test_email_not_stripped(self):
+        """@ 前非空白（邮箱场景）不剥."""
+        assert extract_question(make_msg("邮箱是a@b.com吗")) == "邮箱是a@b.com吗"
+
+    def test_email_after_at_tag_kept(self):
+        assert extract_question(make_msg("@张三 邮箱是a@b.com吗")) == "邮箱是a@b.com吗"
+
+    def test_mid_sentence_at_tag_stripped(self):
+        assert extract_question(make_msg("请问 @张三 怎么退货")) == "请问 怎么退货"
 
 
 class TestMsgIdDedup:

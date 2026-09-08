@@ -5,8 +5,9 @@ import time
 
 from app.config import settings
 
-# @ 标签形如 "@昵称 "（企业微信把 at 的人以 "@名字 " 插入 content），剔除后 strip
-_AT_TAG = re.compile(r"@\S+\s*")
+# @ 标签形如 "@昵称 "（企业微信把 at 的人以 "@名字 " 插入 content），剔除后 strip；
+# 仅剥行首/空白后的 @（避免误伤 "a@b.com" 邮箱），连续多个 @ 标签一次性剥掉
+_AT_TAG = re.compile(r"(^|\s)(?:@\S+\s*)+")
 
 # 指令前缀 -> action；匹配要求前缀后为串尾或空格，避免 "#kb:listxxx" 误判
 _COMMANDS = {
@@ -23,14 +24,16 @@ async def is_at_me(msg: dict) -> bool:
     """
     bot = settings.WX_BOT_USERID
     content = msg.get("content") or ""
-    result = (bool(bot) and bot in (msg.get("at_userids") or [])) or "@all" in content
+    # @all 需独立成词："@ally"、"邮箱a@all.com" 不算
+    at_all = re.search(r"(^|\s)@all(\s|$)", content) is not None
+    result = (bool(bot) and bot in (msg.get("at_userids") or [])) or at_all
     msg["is_at_me"] = result
     return result
 
 
 def extract_question(msg: dict) -> str:
     """剔除 @ 标签与首尾空格，返回用户实际问题文本。"""
-    return _AT_TAG.sub("", msg.get("content") or "").strip()
+    return _AT_TAG.sub(r"\1", msg.get("content") or "").strip()
 
 
 class MsgIdDedup:
