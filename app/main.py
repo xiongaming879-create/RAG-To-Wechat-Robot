@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.admin import router as admin_router
+from app.api.chat import router as chat_router
 from app.queue.task_queue import task_queue
 from app.rag.vector_store import vector_store
 from app.wx_callback import router as wx_callback_router
@@ -26,6 +27,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="RAG WeChat Bot", lifespan=lifespan)
 app.include_router(wx_callback_router)
 app.include_router(admin_router)
+app.include_router(chat_router)
 
 
 @app.get("/health")

@@ -13,7 +13,8 @@ SYSTEM_PROMPT = """你是内部知识库问答助手，只能根据给定的知�
 FALLBACK = "【知识库暂无相关信息】"
 
 
-async def answer(question: str, chat_id: str, user_id: str) -> str:
+async def answer_with_sources(question: str, chat_id: str, user_id: str) -> dict:
+    """返回 {"answer": str, "sources": [{"filename","chunk_index","score"}...]}。"""
     history = context_store.get(chat_id, user_id)
     # 检索前带历史上下文优化查询
     query = "\n".join(f"{m['role']}：{m['content']}" for m in history)
@@ -22,7 +23,7 @@ async def answer(question: str, chat_id: str, user_id: str) -> str:
     chunks = await retriever.retrieve(query)
     if not chunks:
         # 禁止编造：检索不到不调 chat
-        return FALLBACK
+        return {"answer": FALLBACK, "sources": []}
 
     blocks = "\n\n".join(
         f"[来源：{c['filename']}（第 {c['chunk_index']} 块）]\n{c['text']}"
@@ -35,4 +36,18 @@ async def answer(question: str, chat_id: str, user_id: str) -> str:
     )
     reply = await llm_client.chat(SYSTEM_PROMPT, user_msg)
     context_store.append(chat_id, user_id, question, reply)
-    return reply
+    return {
+        "answer": reply,
+        "sources": [
+            {
+                "filename": c["filename"],
+                "chunk_index": c["chunk_index"],
+                "score": c["score"],
+            }
+            for c in chunks
+        ],
+    }
+
+
+async def answer(question: str, chat_id: str, user_id: str) -> str:
+    return (await answer_with_sources(question, chat_id, user_id))["answer"]
