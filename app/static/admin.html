@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库管理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; background: #f4f5f7; color: #222; }
+  .top { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: #fff; border-bottom: 1px solid #e0e0e0; }
+  .top a { color: #1668dc; text-decoration: none; }
+  .wrap { max-width: 860px; margin: 20px auto; padding: 0 16px; }
+  .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  input[type=text], input[type=password] { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  button { padding: 8px 16px; border: none; border-radius: 6px; background: #1668dc; color: #fff; font-size: 14px; cursor: pointer; }
+  button.danger { background: #d33; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #msg { margin-top: 8px; font-size: 13px; min-height: 18px; white-space: pre-wrap; }
+  .ok { color: #2a7; } .bad { color: #d33; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; word-break: break-all; }
+  th { color: #666; font-weight: 500; background: #fafafa; }
+</style>
+</head>
+<body>
+<div class="top"><b>知识库管理</b><a href="/">返回问答</a></div>
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <label>管理 Token：<input type="password" id="token" size="28"></label>
+      <button id="saveToken">保存</button>
+      <button id="refresh">刷新列表</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <input type="file" id="file">
+      <button id="upload">上传</button>
+      <span style="color:#888;font-size:13px">支持 txt/md/pdf/docx，≤20MB</span>
+    </div>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr><th>文件名</th><th>块数</th><th>上传时间</th><th>file_hash</th><th>操作</th></tr></thead>
+      <tbody id="docs"><tr><td colspan="5">—</td></tr></tbody>
+    </table>
+  </div>
+</div>
+<script>
+var msgEl = document.getElementById('msg');
+var docsEl = document.getElementById('docs');
+var tokenInput = document.getElementById('token');
+var memToken = '';
+
+// ponytail: sessionStorage 不可用时降级到内存变量（刷新页面需重输）
+function getToken() {
+  try { return sessionStorage.getItem('adminToken') || ''; } catch (e) { return memToken; }
+}
+function setToken(t) {
+  memToken = t;
+  try { sessionStorage.setItem('adminToken', t); } catch (e) {}
+}
+tokenInput.value = getToken();
+if (getToken()) loadDocs();
+
+function show(text, cls) {
+  msgEl.textContent = text;
+  msgEl.className = cls || '';
+}
+
+document.getElementById('saveToken').addEventListener('click', function () {
+  setToken(tokenInput.value.trim());
+  show('Token 已保存', 'ok');
+  loadDocs();
+});
+
+function headers() {
+  return { 'X-Admin-Token': getToken() };
+}
+
+function handle401(resp) {
+  if (resp.status === 401) {
+    show('Token 无效，请重新输入并保存', 'bad');
+    return true;
+  }
+  return false;
+}
+
+document.getElementById('refresh').addEventListener('click', loadDocs);
+
+async function loadDocs() {
+  if (!getToken()) { show('请先输入管理 Token', 'bad'); return; }
+  show('加载中…');
+  try {
+    var resp = await fetch('/api/admin/docs?page=1&page_size=100', { headers: headers() });
+    if (handle401(resp)) return;
+    var data = await resp.json();
+    if (!resp.ok) { show('加载失败：' + (data.detail || ('HTTP ' + resp.status)), 'bad'); return; }
+    show('共 ' + data.total + ' 个文档', 'ok');
+    docsEl.innerHTML = '';
+    if (!data.items.length) {
+      docsEl.innerHTML = '<tr><td colspan="5" style="color:#888">暂无文档</td></tr>';
+      return;
+    }
+    data.items.forEach(function (d) {
+      var tr = document.createElement('tr');
+      var time = '';
+      var ts = Number(d.upload_time);
+      if (ts) time = new Date(ts * 1000).toLocaleString('zh-CN');
+      tr.innerHTML =
+        '<td></td><td></td><td></td><td></td><td></td>';
+      tr.children[0].textContent = d.filename;
+      tr.children[1].textContent = d.chunk_count;
+      tr.children[2].textContent = time;
+      tr.children[3].textContent = String(d.file_hash).slice(0, 8);
+      var btn = document.createElement('button');
+      btn.className = 'danger';
+      btn.textContent = '删除';
+      btn.addEventListener('click', function () { del(d.doc_id, d.filename); });
+      tr.children[4].appendChild(btn);
+      docsEl.appendChild(tr);
+    });
+  } catch (err) {
+    show('网络错误：' + err.message, 'bad');
+  }
+}
+
+document.getElementById('upload').addEventListener('click', async function () {
+  if (!getToken()) { show('请先输入管理 Token', 'bad'); return; }
+  var input = document.getElementById('file');
+  if (!input.files.length) { show('请先选择文件', 'bad'); return; }
+  var btn = this;
+  btn.disabled = true;
+  show('上传中…');
+  try {
+    var fd = new FormData();
+    fd.append('file', input.files[0]);
+    var resp = await fetch('/api/admin/upload', { method: 'POST', headers: headers(), body: fd });
+    if (handle401(resp)) return;
+    var data = await resp.json();
+    if (!resp.ok) {
+      show('上传失败：' + (data.detail || ('HTTP ' + resp.status)), 'bad');
+    } else if (data.status === 'skipped') {
+      show('已存在相同内容，跳过（skipped）', 'ok');
+      loadDocs();
+    } else if (data.status === 'ok') {
+      show('上传成功：' + data.doc_id, 'ok');
+      input.value = '';
+      loadDocs();
+    } else {
+      show('未知返回：' + JSON.stringify(data), 'bad');
+    }
+  } catch (err) {
+    show('网络错误：' + err.message, 'bad');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function del(docId, name) {
+  if (!confirm('确定删除「' + name + '」？')) return;
+  try {
+    var resp = await fetch('/api/admin/doc/' + encodeURIComponent(docId), {
+      method: 'DELETE', headers: headers()
+    });
+    if (handle401(resp)) return;
+    var data = await resp.json();
+    if (!resp.ok) {
+      show('删除失败：' + (data.detail || ('HTTP ' + resp.status)), 'bad');
+    } else {
+      show('已删除：' + name, 'ok');
+      loadDocs();
+    }
+  } catch (err) {
+    show('网络错误：' + err.message, 'bad');
+  }
+}
+</script>
+</body>
+</html>

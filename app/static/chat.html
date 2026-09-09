@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库问答</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; background: #f4f5f7; color: #222; }
+  .top { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: #fff; border-bottom: 1px solid #e0e0e0; }
+  .top a { color: #1668dc; text-decoration: none; }
+  #chat { max-width: 760px; margin: 0 auto; padding: 20px 16px 90px; }
+  .msg { margin: 12px 0; display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble { max-width: 80%; padding: 10px 14px; border-radius: 10px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user .bubble { background: #1668dc; color: #fff; border-bottom-right-radius: 2px; }
+  .msg.ai .bubble { background: #fff; border: 1px solid #e0e0e0; border-bottom-left-radius: 2px; }
+  .meta { margin-top: 8px; font-size: 12px; color: #888; }
+  .src { margin-top: 6px; font-size: 12px; color: #666; border-top: 1px dashed #ddd; padding-top: 6px; }
+  .src div { line-height: 1.8; }
+  .bar { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #e0e0e0; padding: 12px 16px; }
+  .bar form { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; }
+  #q { flex: 1; padding: 10px 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; }
+  button { padding: 10px 20px; border: none; border-radius: 8px; background: #1668dc; color: #fff; font-size: 15px; cursor: pointer; }
+  button:disabled { background: #9db8dd; cursor: not-allowed; }
+  .err { color: #d33; }
+</style>
+</head>
+<body>
+<div class="top"><b>知识库问答</b><a href="/static/admin.html">管理</a></div>
+<div id="chat"></div>
+<div class="bar">
+  <form id="f">
+    <input id="q" placeholder="输入问题…" autocomplete="off">
+    <button id="send" type="submit">发送</button>
+  </form>
+</div>
+<script>
+var chatEl = document.getElementById('chat');
+var qEl = document.getElementById('q');
+var sendBtn = document.getElementById('send');
+
+function addMsg(cls, text) {
+  var msg = document.createElement('div');
+  msg.className = 'msg ' + cls;
+  var bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  msg.appendChild(bubble);
+  chatEl.appendChild(msg);
+  window.scrollTo(0, document.body.scrollHeight);
+  return bubble;
+}
+
+document.getElementById('f').addEventListener('submit', async function (e) {
+  e.preventDefault();
+  var q = qEl.value.trim();
+  if (!q) return;
+  qEl.value = '';
+  addMsg('user', q);
+  sendBtn.disabled = true;
+  var bubble = addMsg('ai', '思考中…');
+  try {
+    var resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    });
+    var data = await resp.json().catch(function () { return {}; });
+    if (!resp.ok) {
+      bubble.textContent = '出错了：' + (data.error || ('HTTP ' + resp.status));
+      bubble.classList.add('err');
+    } else {
+      bubble.textContent = data.answer || '（空回答）';
+      var meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = '耗时 ' + data.elapsed_ms + ' ms';
+      bubble.appendChild(meta);
+      var src = document.createElement('div');
+      src.className = 'src';
+      if (data.sources && data.sources.length) {
+        data.sources.forEach(function (s) {
+          var d = document.createElement('div');
+          d.textContent = '来源：' + s.filename + '（第 ' + s.chunk_index + ' 块，score ' + Number(s.score).toFixed(2) + '）';
+          src.appendChild(d);
+        });
+      } else {
+        src.textContent = '无检索命中';
+      }
+      bubble.appendChild(src);
+    }
+  } catch (err) {
+    bubble.textContent = '网络错误：' + err.message;
+    bubble.classList.add('err');
+  } finally {
+    sendBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

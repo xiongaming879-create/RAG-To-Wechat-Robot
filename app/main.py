@@ -1,7 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.admin import router as admin_router
 from app.api.chat import router as chat_router
@@ -28,6 +31,14 @@ app = FastAPI(title="RAG WeChat Bot", lifespan=lifespan)
 app.include_router(wx_callback_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+@app.get("/")
+async def index() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "chat.html")
 
 
 @app.get("/health")
