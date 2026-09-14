@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # MinerU 文档解析
     MINERU_API_URL: str = ""
+    MINERU_API_TOKEN: str = ""
 
     # 管理员白名单（JSON 数组字符串，pydantic-settings 自动解析）
     ADMIN_USER_LIST: list[str] = []
