@@ -5,8 +5,8 @@
 from app.rag.llm_client import llm_client
 from app.rag.vector_store import vector_store
 
-VECTOR_THRESHOLD = 0.60
-RERANK_THRESHOLD = 0.5
+VECTOR_THRESHOLD = 0.2
+RERANK_THRESHOLD = 0.2
 RECALL_TOP_K = 15
 FINAL_TOP_K = 4
 
