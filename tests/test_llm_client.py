@@ -61,7 +61,7 @@ async def test_rerank_restores_input_order_by_index():
         bodies.append(request.read())
         return httpx.Response(
             200,
-            json={"results": [{"index": 1, "score": 0.9}, {"index": 0, "score": 0.5}]},
+            json={"results": [{"index": 1, "document": None, "relevance_score": 0.9}, {"index": 0, "document": None, "relevance_score": 0.5}]},
         )
 
     client = make_client(handler)

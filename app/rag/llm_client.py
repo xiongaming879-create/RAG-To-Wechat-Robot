@@ -65,7 +65,9 @@ class SiliconFlowClient:
         scores = [0.0] * len(docs)
         for r in _list_field(data, "results", "rerank"):
             try:
-                scores[r["index"]] = r["score"]
+                # SiliconFlow 真实返回 relevance_score（旧版/兼容层为 score），两者都接受
+                score = r["relevance_score"] if "relevance_score" in r else r["score"]
+                scores[r["index"]] = score
             except (KeyError, TypeError, ValueError, IndexError) as e:
                 raise LLMClientError(f"响应格式异常: rerank 结果缺少 index/score: {str(r)[:200]}") from e
         return scores
